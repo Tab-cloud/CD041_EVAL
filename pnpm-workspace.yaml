@@ -1,0 +1,20 @@
+packages:
+  - "packages/*"
+  - "app"
+
+# pnpm 11 reads workspace install settings from this file. Hoisting is required
+# because this repository is also built from exFAT volumes, which cannot create
+# the symlinks used by the default isolated linker.
+nodeLinker: hoisted
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+sharedWorkspaceLockfile: true
+verifyDepsBeforeRun: error
+enableGlobalVirtualStore: false
+overrides:
+  lodash: "4.18.1"
+onlyBuiltDependencies:
+  - esbuild
+allowBuilds:
+  esbuild: true
+  tesseract.js: true

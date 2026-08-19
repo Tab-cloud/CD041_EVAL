@@ -1,0 +1,8 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm -C .. prepare:sidecars && pnpm build"
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}

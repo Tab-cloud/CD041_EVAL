@@ -1,0 +1,23 @@
+{
+  "name": "@eval-agent/core",
+  "version": "0.1.0",
+  "description": "嵌入式 Agent 核心引擎",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "node ../../scripts/generate-runtime-protocol.mjs && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0",
+    "sharp": "^0.35.3",
+    "tesseract.js": "^7.0.0",
+    "unpdf": "^1.3.2",
+    "word-extractor": "^1.0.4"
+  }
+}

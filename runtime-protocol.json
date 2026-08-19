@@ -1,0 +1,12 @@
+{
+  "version": 6,
+  "events": [
+    "heartbeat", "session", "task-status", "graph-event", "serial-context", "context-compaction",
+    "execution-state", "assistant-part", "tool-call", "tool-result", "tool-status",
+    "context-capacity", "model-routed", "model-attempt", "tool-stream", "plan-submitted",
+    "question-request", "question-resolved",
+    "approval-request", "approval-resolved", "tool-execution", "agent-activity", "agent-progress",
+    "execution-stopped", "execution-continued", "execution-blocked", "execution-phase",
+    "artifact-updated", "error", "done"
+  ]
+}

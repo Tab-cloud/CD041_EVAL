@@ -1,0 +1,49 @@
+node_modules/
+dist/
+target/
+.eval/
+*.tsbuildinfo
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# Build outputs
+packages/templates/*/build/
+*.hex
+*.bin
+*.elf
+*.o
+*.d
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Tauri
+app/src-tauri/target/
+app/src-tauri/target-package*/
+app/src-tauri/gen/
+app/target-package*/
+eval_config.json
+
+# Compiled binaries & build artifacts
+*.bun-build
+*.exe
+*.traineddata
+*.onnx
+eval-server/eval-server
+eval-server/icudtl.dat
+release/
+
+# OCR runtime models (large, fetched separately)
+eval-server/models/
+
+# Debug / scratch output
+/tmp/
+.tmp-*/
+vision-check-result.txt
+*.check-result.txt
