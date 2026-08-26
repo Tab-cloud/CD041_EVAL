@@ -1,12 +1,18 @@
+#[cfg(windows)]
 use crate::credentials::{
     mcp_target, read_named_secret, write_mcp_index, write_named_secret, McpCredentialIndex,
     McpCredentialKeys, WEBHOOK_TARGET,
 };
+#[cfg(windows)]
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
+#[cfg(windows)]
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(windows)]
+use std::collections::BTreeSet;
 
+#[cfg(windows)]
 const MCP_CONFIG_KEY: &str = "mcp.servers";
 
 #[derive(Debug, Default, Serialize)]
@@ -196,6 +202,7 @@ fn valid_name(value: &str, max: usize) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
+#[cfg(windows)]
 fn eval_dir() -> std::path::PathBuf {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))

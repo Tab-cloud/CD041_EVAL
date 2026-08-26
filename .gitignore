@@ -37,6 +37,7 @@ eval_config.json
 *.onnx
 eval-server/eval-server
 eval-server/icudtl.dat
+bundle-resources/
 release/
 
 # OCR runtime models (large, fetched separately)

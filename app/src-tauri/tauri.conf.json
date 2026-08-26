@@ -40,9 +40,7 @@
     "shortDescription": "面向嵌入式开发的 AI Agent 工具",
     "longDescription": "集成原理图分析、固件开发、硬件调试、编译烧录等功能的嵌入式智能开发助手。",
     "resources": {
-      "../../eval-server/eval-server.exe": "eval-server.exe",
-      "../../eval-server/icudtl.dat": "icudtl.dat",
-      "../../tools/eval-serial/target/release/eval-serial.exe": "eval-serial.exe"
+      "../../bundle-resources/": ""
     },
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
