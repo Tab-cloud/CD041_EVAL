@@ -1,6 +1,8 @@
 # Eval Backend Features — 功能清单与维护文档
 
-> 自动生成于 2026-07-06 | 基于 `packages/core/src/` 代码审计
+> 自动生成于 2026-08-26 | 基于 `packages/core/src/` 代码审计
+> 执行循环与多 Agent 的权威架构说明见 `agent-execution-loop-architecture.md`，
+> 编译流水线见 `build-pipeline-architecture.md`。
 
 ---
 
@@ -8,277 +10,270 @@
 
 ```
 packages/core/src/
-├── runtime/          # HTTP服务、Agent循环、LLM客户端、任务调度
-│   ├── index.ts         启动入口 (Bun.serve :4096)
-│   ├── server.ts         HTTP路由 (22端点) + SSE推送
-│   ├── agent-loop.ts     Agent循环 (15轮 max)
-│   ├── llm-client.ts     LLM流式调用 (Vercel AI SDK)
-│   ├── llm-manager.ts    用量统计 / 模型健康 / fallback链
-│   ├── task-scheduler.ts 优先级任务队列
-│   ├── orchestrator.ts   关键词 → Agent路由
-│   ├── planner.ts        任务分解器 (LLM拆子任务)
-│   ├── reflection.ts     编译-修复自省循环
-│   ├── agent-chain.ts    5条多Agent流水线
-│   └── config-store.ts   模型配置持久化
-├── tool/             # 25个工具
-│   ├── fs/              5个文件系统工具
-│   ├── general/         7个通用工具
-│   ├── schematic/       3个原理图工具
-│   └── hardware/        10个硬件工具
-├── agent/            # 17个Agent定义
-├── skills/           # 6个技能文件 (.md)
-├── model-router/     # 模型路由 (能力评分)
-├── store/            # SQLite持久化
-└── util/             # PDF/Office解析
+├── index.ts               # 库导出入口（不监听端口）
+├── runtime/               # HTTP 服务、Agent 循环、LLM 客户端、任务调度（约 130 个文件）
+│   ├── index.ts           # 真实服务启动入口 (Bun.serve :4096)
+│   ├── server.ts          # 主 HTTP 路由 + 安全前置（Origin 白名单 / Token / CORS）
+│   ├── server-chat.ts     # POST /api/chat SSE 流式对话
+│   ├── server-tasks.ts    # 任务 / 检查点 / 会话命令路由
+│   ├── server-workflows.ts# 工作流路由
+│   ├── server-programmer.ts # 烧录器路由
+│   ├── agent-loop*.ts     # Agent 循环（轻量回合策略，约 10 个文件）
+│   ├── execution-*.ts     # 执行流 / 预算 / 调度 / 终态
+│   ├── model-*.ts         # 模型失败策略 / 限额 / 重试 / 就绪
+│   ├── server-chat-*.ts   # 聊天请求 / 策略 / 投影 / 路由 / 准入
+│   ├── runtime-protocol.ts # 运行时协议版本（v6，33 种 SSE 事件）
+│   ├── orchestrator.ts    # AgentOrchestrator
+│   ├── planner.ts         # 任务分解（LLM 拆子任务）
+│   └── workflow-engine.ts # 工作流引擎
+├── tool/                  # 36 个内置工具（EMBEDDED_TOOLS）
+│   ├── fs/                # 6 个文件系统工具
+│   ├── general/           # 9 个通用工具（bash/task/delegate_dag 等）
+│   ├── schematic/         # 3 个原理图工具
+│   ├── hardware/          # 11 个硬件/编译/烧录工具
+│   └── community/         # 7 个 Eval Web 社区工具
+├── agent/                 # 20 个 Agent 定义
+│   ├── registry.ts        # AgentRegistry
+│   └── definitions/       # main-agent / subagents / component / all
+├── skills/                # 8 个内置技能 (.md) + loader/manager
+├── knowledge/chips.ts     # 芯片知识库（CHIP_DATABASE）
+├── mcp/                   # MCP 客户端 / 管理器 / 安全
+├── model-router/          # 模型路由（能力评分）
+├── project/               # ProjectManager（.eval/project.toml）
+├── store/                 # SQLite 持久化（30 个模块，55 个迁移版本）
+├── util/                  # PDF / Office 解析与写入
+└── vision/client.ts       # 视觉模型客户端
 ```
 
 ---
 
-## 二、API 端点清单（22个）
+## 二、进程模型与部署
 
-### 模型配置
-
-| 方法 | 路径 | 状态 | 前端对接 |
-|------|------|:---:|:---:|
-| GET | `/api/models` | ✅ | ❌ |
-| PUT | `/api/models` | ✅ | ✅ ModelConfigModal |
-| POST | `/api/models/import` | ✅ | ❌ |
-| POST | `/api/models/preset` | ✅ | ❌ |
-
-### 会话管理
-
-| 方法 | 路径 | 状态 | 前端对接 |
-|------|------|:---:|:---:|
-| GET | `/api/sessions` | ✅ | ❌ (前端本地管理) |
-| POST | `/api/sessions` | ✅ | ❌ (前端本地创建) |
-| DELETE | `/api/sessions?id=` | ✅ | ✅ LeftSidebar |
-| POST | `/api/sessions/archive` | ✅ | ✅ LeftSidebar |
-
-### 消息
-
-| 方法 | 路径 | 状态 | 前端对接 |
-|------|------|:---:|:---:|
-| GET | `/api/messages?sessionId=` | ✅ | ✅ 切换会话加载历史 |
-| POST | `/api/chat` | ✅ SSE | ✅ handleSend |
-
-### 监控 & 调试
-
-| 方法 | 路径 | 状态 | 前端对接 |
-|------|------|:---:|:---:|
-| GET | `/api/health` | ✅ | ❌ |
-| GET | `/api/agents` | ✅ | ❌ (前端硬编码5个) |
-| GET | `/api/usage` | ✅ | ❌ |
-| GET | `/api/logs` | ✅ | ❌ |
-| GET | `/api/tasks` | ✅ | ❌ |
-| DELETE | `/api/tasks` | ✅ | ❌ |
-
-#### 本地诊断文件
-
-- 后端同时把结构化编排事件写入 `$EVAL_DATA_DIR/log.txt`；桌面版默认位置为 `%USERPROFILE%\.eval\log.txt`。
-- 每行是一个 JSON 事件，包含时间、级别、eventType、sessionId、runId、requestId（位于 data 中）、状态与事件投影版本，便于按一次请求重建执行链。
-- 文件达到 8 MiB 后轮转为 `log.1.txt`；SQLite 编排日志仍是权威记录，文本日志故障不会改变任务状态。
-- 密码、Token、Cookie、Authorization 等敏感字段在写入前统一脱敏；不记录模型思考正文、附件正文或完整提示词。
-
-### 高级功能
-
-| 方法 | 路径 | 状态 | 前端对接 |
-|------|------|:---:|:---:|
-| GET | `/api/rag/search` | ✅ | ❌ |
-| GET | `/api/checkpoint` | ✅ | ❌ |
-| GET | `/api/workflows` | ✅ | ❌ |
-| GET | `/api/archive/search` | ✅ | ❌ |
-| POST | `/api/test-connection` | ✅ | ✅ ModelConfigModal |
-| GET | `/stable.json` | ⚠️ 占位 | ❌ |
-
-**对接率: 6/22 (27%)**
+- 服务入口 `packages/core/src/runtime/index.ts`，`Bun.serve` 默认监听 `127.0.0.1:4096`（`HOST`/`PORT` 可覆盖）。
+- 桌面壳 Tauri 2 通过 `plugin-shell` 拉起 `eval-server` 可执行文件，前端用 HTTP + SSE 通信。
+- 鉴权：启动时校验 `EVAL_AGENT_TOKEN`（无 Token 且未显式允许则拒绝启动）；请求过 `server-security.ts`（Origin 白名单 + `x-eval-agent-token` + 动态 CORS，禁止 `*`）。
+- 持久化：SQLite `~/.eval/eval.db`（`EVAL_DATA_DIR` 可覆盖），WAL 模式，迁移到 55 版；诊断日志 `~/.eval/log.txt`（8 MiB 轮转，敏感字段脱敏）。
+- 单实例：`runtime_leader_lease` / `runtime_owner_leases` 租约表拒绝第二个实例并行调度。
+- 构建：`bun build --compile` 生成 `eval-server`（macOS Universal 用 `lipo` 合并 arm64/x64）；串口旁车 `tools/eval-serial` 为 Rust 子进程，JSON 输出。
 
 ---
 
-## 三、SSE 事件（8种）
+## 三、HTTP 路由清单
 
-| 事件 | 数据结构 | 前端处理 |
-|------|---------|:---:|
-| `text` | `{ text: string }` | ✅ UPDATE_LAST_MESSAGE |
-| `thinking` | `{ status: "start"\|"end" }` | ✅ SET_THINKING |
-| `tool-status` | `{ id, name, status, input }` | ✅ workLog + toolStatus |
-| `tool-call` | `{ name, input }` | ✅ addLogLine |
-| `tool-result` | `{ id, name, result }` | ✅ addLogLine + workLog error |
-| `context-capacity` | `{ used, total, breakdown, usage }` | ✅ ContextUsagePanel |
-| `error` | `{ message }` | ✅ UPDATE_LAST_MESSAGE |
-| `done` | `{ sessionId, taskId }` | ❌ 未处理 |
+### 核心对话与会话
 
-**对接率: 7/8 (87.5%)**
-
----
-
-## 四、工具清单（25个）
-
-### 文件系统 (5个，全部真实)
-
-| 工具 | 描述 | 权限 |
+| 方法 | 路径 | 说明 |
 |------|------|------|
-| `read` | 读取文件/目录 | ✅ |
-| `write` | 写入文件 | ✅ |
-| `edit` | 查找替换 | ✅ |
-| `glob` | 文件模式搜索 | ✅ |
-| `grep` | 内容搜索 | ✅ |
+| POST | `/api/chat` | SSE 流式对话（核心端点） |
+| GET | `/api/messages` | 会话消息（已脱敏投影） |
+| GET/POST/DELETE | `/api/sessions` | 会话列表 / 创建 / 删除 |
+| POST | `/api/sessions/archive` `/unarchive` | 归档（生成摘要）/ 取消归档 |
+| POST | `/api/sessions/compact` | 压缩 LLM 上下文 |
+| POST | `/api/sessions/clear` | 清空会话 |
+| GET/DELETE | `/api/sessions/artifacts` | 会话产物 |
+| PATCH | `/api/sessions/preferences` | 会话写作偏好 |
+| POST | `/api/sessions/runtime-access` | 会话运行时访问范围（scope） |
+| GET | `/api/archive/search` | 归档摘要搜索 |
+| GET | `/api/health` | 健康检查（协议版本、工具/Agent 数量） |
+| GET | `/api/agents` | Agent 列表 |
 
-### 通用 (7个)
+### 任务 / 检查点 / 命令
 
-| 工具 | 描述 | 状态 |
-|------|------|:---:|
-| `bash` | 执行shell命令 | ✅ |
-| `webfetch` | 获取网页内容 | ✅ |
-| `websearch` | DuckDuckGo搜索 | ✅ |
-| `todowrite` | 任务列表 | ✅ |
-| `question` | 向用户提问 | ✅ |
-| `task` | 启动子Agent | ⚠️ Stub |
-| `skill` | 加载技能文件 | ✅ |
-
-### 原理图 (3个)
-
-| 工具 | 描述 | 状态 |
-|------|------|:---:|
-| `schematic_read` | 读取原理图PDF/图片 | ✅ |
-| `pin_extract` | 提取引脚映射 | ✅ |
-| `datasheet_read` | 读取数据手册 | ✅ |
-
-### 硬件 (10个)
-
-| 工具 | 描述 | 状态 |
-|------|------|:---:|
-| `compile` | 编译 Espressif ESP 系列原生 ESP-IDF 固件；非 ESP 仍可设计代码并在外部环境手动编译 | ✅ |
-| `flash` | 通过原生 USB、USB-UART 或 UART 下载并校验 ESP-IDF 认证固件包；非 ESP 使用厂商工具手动下载 | ✅ |
-| `serial_open` | 串口操作 | ⚠️ 部分(Tauri对接) |
-| `serial_monitor` | 串口监听 | ⚠️ 部分(Tauri对接) |
-| `swd_debug` | SWD调试 | ✅ |
-| `usb_detect` | USB设备检测 | ✅ |
-| `project_init` | 项目初始化 | ✅ |
-| `lvgl_gen` | LVGL代码生成 | ✅ |
-| `write_office` | Office文档生成 | ✅ |
-| `ocr_image` | 图片OCR | ✅ |
-
-**真实实现: 24/25 (96%) | Stub: 1 (task)**
-
----
-
-## 五、Agent 定义（17个）
-
-| ID | 名称 | 模式 | 工具数 |
-|----|------|------|:---:|
-| `component-researcher` | 器件研究员 | hidden | 6 |
-| `researcher` | 资料研究员 | hidden | 5 |
-| `requirements-analyst` | 需求分析师 | hidden | 3 |
-| `hardware-engineer` | 硬件工程师 | hidden | 5 |
-| `software-engineer` | 软件工程师 | hidden | 5 |
-| `firmware-engineer` | 固件工程师 | hidden | 9 |
-| `ui-engineer` | UI工程师 | hidden | 5 |
-| `architect` | 架构师 | hidden | 5 |
-| `os-engineer` | OS工程师 | hidden | 7 |
-| `test-engineer` | 测试工程师 | hidden | 4 |
-| `doc-writer` | 文档工程师 | hidden | 5 |
-| `planner` | 计划工程师 | hidden | 3 |
-| `debug-engineer` | 调试工程师 | hidden | 6 |
-| `general` | 通用助手 | **subagent** | 10 |
-| `explore` | 代码探索 | **subagent** | 5 |
-| `title-gen` | 标题生成 | hidden | 0 |
-| `summary-gen` | 摘要生成 | hidden | 0 |
-
-**AgentChain 流水线 (5条)**：full-development / quick-prototype / debugging / component-selection / ui-development
-
----
-
-## 六、技能文件（6个）
-
-| 文件 | 技能名 | 描述 |
-|------|--------|------|
-| `stm32-hal.md` | stm32-hal | STM32 HAL库开发 |
-| `freertos.md` | freertos | FreeRTOS配置 |
-| `lvgl-ui.md` | lvgl-ui | LVGL界面开发 |
-| `arm-debugging.md` | arm-debugging | ARM调试方法论 |
-| `component-selection.md` | component-selection | 器件选型 |
-| `architecture-audit.md` | architecture-audit | 系统架构审计 |
-
----
-
-## 七、前端对接状态总结
-
-### 已对接 ✅
-
-| 功能 | 对接方式 |
-|------|---------|
-| 流式对话 | SSE text → ChatView |
-| Thinking 状态 | SSE thinking → 思考指示器 |
-| 工具执行状态 | SSE tool-status → 工作状态面板 |
-| 操作日志 | SSE tool-status/result → workLog面板 |
-| 上下文用量 | SSE context-capacity → RightPanel |
-| 会话切换 | GET /api/messages → 加载历史 |
-| 会话归档 | POST /api/sessions/archive |
-| 会话删除 | DELETE /api/sessions |
-| 模型配置 | PUT /api/models + 测试连接 |
-| 推理档位 | 前端EffortMode下拉 |
-| Plan模式 | scope → system prompt注入 |
-
-### 未对接 ❌（待实现）
-
-| 优先级 | 功能 | 说明 |
-|:---:|------|------|
-| 🔴 | **SSE `done` 事件** | 前端未处理，错过完成通知 |
-| 🔴 | **`task` 工具 (Stub)** | 子Agent委派仅返回占位文本 |
-| 🟡 | `/api/health` 健康检查 | 启动时可检测后端是否在线 |
-| 🟡 | `/api/agents` Agent列表 | 前端硬编码5个，后端有17个 |
-| 🟡 | `/api/sessions` 会话同步 | 前端本地管理，启动时不从后端加载 |
-| 🟡 | `/api/usage` 用量统计 | 无Token/费用面板 |
-| 🟡 | `/api/logs` 调用日志 | 无LLM调用记录面板 |
-| 🟡 | `/api/tasks` 任务队列 | 无任务调度监控面板 |
-| 🟡 | `/api/archive/search` 归档搜索 | 无搜索栏 |
-| 🟢 | `/api/models/import` | ModelConfigModal无导入按钮 |
-| 🟢 | `/api/models/preset` | ModelConfigModal无预设选择器 |
-| 🟢 | `/api/rag/search` 语义搜索 | 无搜索UI |
-| 🟢 | `/api/checkpoint` 断点恢复 | 无恢复UI |
-| 🟢 | `/api/workflows` 多Agent流水线 | 无工作流启动器 |
-| 🟢 | `serial_open/monitor` 串口面板 | serialOutput状态空 |
-| 🟢 | `swd_debug` 调试面板 | debugOutput状态空 |
-| 🟢 | `project_init` 项目向导 | 无UI |
-| 🟢 | `lvgl_gen` 界面生成器 | 无UI |
-
----
-
-## 八、建议新增的功能
-
-### 工具类
-- [ ] **`audit` 工具** — 自动化系统架构审计（替代依赖 skill 的手动流程）
-- [ ] **`perf` 工具** — 性能分析（编译时间、内存占用）
-- [ ] **`diff` 工具** — 文件对比
-- [ ] **`git` 工具** — Git 操作封装
-
-### 技能类
-- [x] **ESP-IDF 平台适配** — 原生工程生成、`idf.py` 构建、多 BIN 认证、esptool USB/UART 下载与校验
-- [ ] **`nordic-nrf`** — Nordic nRF52/nRF53 开发技能
-- [ ] **`risc-v`** — RISC-V MCU 开发技能
-- [ ] **`ble-mesh`** — BLE Mesh 协议技能
-
-### 前端面板
-- [ ] **用量分析面板** — Token/费用/调用统计 (对接 /api/usage, /api/logs)
-- [ ] **任务队列面板** — 实时任务状态 (对接 /api/tasks)
-- [ ] **Agent 选择器** — 从 /api/agents 动态加载
-- [ ] **串口终端面板** — 对接 serialOpen/Monitor
-- [ ] **调试面板** — 对接 swd_debug
-- [ ] **RAG 搜索栏** — 对接 /api/rag/search
-- [ ] **工作流启动器** — 对接 /api/workflows
-
----
-
-## 九、已知技术债务
-
-| 项目 | 位置 | 说明 |
+| 方法 | 路径 | 说明 |
 |------|------|------|
-| ⚠️ Stub | `tool/general/task.ts` | 子Agent委派返回占位文本 |
-| ⚠️ 占位 | `server.ts:/stable.json` | 更新检测返回固定值 |
-| ⚠️ 未使用 | `agent-loop.ts:discoverSkills()` | 之前返回值未注入提示词 (已修复) |
-| ⚠️ 硬编码 | `store.ts:agents[]` | 前端Agent列表硬编码5个 |
-| ⚠️ 未对接 | `serial_open/monitor` | Tauri后端需完成Rust实现 |
-| ⚠️ 未使用 | `planner.ts` TaskDecomposer | 已实现但handleChat未调用 |
-| ⚠️ 未使用 | `reflection.ts` SelfCritic | 已实现但agent-loop未调用 |
-| ⚠️ 未使用 | `agent-chain.ts` 5条流水线 | 已定义但无触发入口 |
-| ⚠️ TypeScript | `planner.ts:58` | 预存TS1127编译错误 |
+| GET/DELETE | `/api/tasks` | 任务队列 |
+| GET | `/api/tasks/status` | 任务状态 + 待审批/提问投影 |
+| GET | `/api/tasks/events` | 任务事件（增量 JSON） |
+| POST | `/api/tasks/cancel` `/retry` | 取消 / 重试 |
+| POST | `/api/tasks/guidance` | 运行中追加引导 |
+| POST | `/api/attachments` | 附件上传 |
+| GET/POST/DELETE | `/api/session-commands` | 会话命令 |
+| GET | `/api/session-commands/stream` | SSE 命令回放 |
+| GET/DELETE | `/api/tasks/logs` `/build/logs` | 任务 / 构建日志 |
+| GET | `/api/checkpoint` | 检查点摘要 |
+| POST | `/api/checkpoint/resume` | 从检查点恢复 |
+| DELETE | `/api/checkpoint` | 删除检查点 |
+
+### 运行图 / 编排 / 审批
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/runs/:runId/contract` | 运行契约 |
+| GET | `/api/run-graphs/:id` | 运行图 |
+| GET | `/api/run-graphs/:id/events` | 运行图事件（增量） |
+| GET | `/api/run-graphs/:id/stream` | SSE 运行图事件流 |
+| GET | `/api/orchestration/logs` | 多 Agent 编排日志 |
+| GET | `/api/model-attempts` | 按 runId 查询模型尝试 |
+| POST | `/api/approvals/respond` | 工具审批应答 |
+| POST | `/api/questions/respond` `/cancel` | 用户提问应答 / 取消 |
+| GET | `/api/tool-executions` | 工具执行历史 |
+| POST | `/api/tool-executions/undo` | 撤销工具执行 |
+
+### 配置 / 模型 / 工具 / 技能 / MCP
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET/PUT | `/api/models` | 模型配置 |
+| POST | `/api/models/validate` `/import` `/preset` | 校验 / 导入 / 预设 |
+| GET/PUT | `/api/settings` | 系统设置 |
+| GET/PUT/DELETE | `/api/project-settings` | 项目级设置覆盖 |
+| GET | `/api/tools` | 工具目录（可按 projectPath） |
+| POST | `/api/tools/test` | 测试单个工具 |
+| GET | `/api/skills` | 技能列表 |
+| POST | `/api/skills/install` | 安装技能（URL/Git/本地/内容） |
+| DELETE | `/api/skills` | 删除技能 |
+| GET/PUT | `/api/custom-agents` | 自定义 Agent |
+| GET/PUT | `/api/mcp/servers` | MCP 服务器 |
+| POST | `/api/mcp/validate` `/connect` | MCP 校验 / 启停 |
+| POST | `/api/test-connection` | 测试模型连接 |
+
+### 项目 / RAG / 诊断 / 用量
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/projects/init` | 初始化项目（`.eval/project.toml`） |
+| GET | `/api/rag/search` | RAG 项目文档检索 |
+| GET | `/api/diagnostics` `/diagnostics/report` | 诊断快照 |
+| GET | `/api/config/backup` | 导出配置备份 |
+| POST | `/api/config/restore` | 恢复配置备份（带回滚） |
+| GET | `/api/usage` | 用量统计 |
+| GET | `/api/usage/heatmap` | Token 每日热力图 |
+| GET | `/api/logs` | LLM 调用日志 |
+| GET | `/api/search/test` | 测试搜索提供商 |
+| GET/PUT/DELETE | `/api/runtime/community-session` | 社区 Token 连接状态 |
+
+### 工作流
+
+`GET/POST/DELETE /api/workflows`、`POST /api/workflows/action`、`GET /api/workflows/report`、
+`GET /api/workflows/analytics`、`GET/POST/PUT/DELETE /api/workflow-templates`、
+`GET/POST/PUT/DELETE /api/workflow-schedules`、`POST /api/workflow-schedules/run`、
+`GET/PUT/POST /api/workflow-webhook*`。
+
+### 串口 / 终端 / 烧录器
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/terminal/exec` | SSE 终端命令执行 |
+| GET | `/api/serial/ports` | 串口列表 |
+| POST | `/api/serial/send` | 串口发送 |
+| POST | `/api/serial/monitor` | SSE 串口监听 |
+| GET | `/api/programmer/status` | 烧录器状态 |
+| POST | `/api/programmer/install-esptool` | 安装 esptool |
+| POST | `/api/programmer/connect` | 连接设备 |
+| POST | `/api/programmer/flash` | SSE 烧录 |
+
+**SSE 端点（6 个）**：`POST /api/chat`、`GET /api/run-graphs/:id/stream`、
+`GET /api/session-commands/stream`、`POST /api/terminal/exec`、`POST /api/serial/monitor`、
+`POST /api/programmer/flash`。
+
+---
+
+## 四、运行时协议（SSE 事件）
+
+`runtime-protocol.json`（仓库根目录）定义前后端共享的 SSE 协议，当前版本 6，
+共 30 种事件，由 `scripts/generate-runtime-protocol.mjs` 生成 TS 类型。事件清单：
+
+`heartbeat`、`session`、`task-status`、`graph-event`、`serial-context`、`context-compaction`、
+`execution-state`、`execution-stopped/continued/blocked/phase`、`assistant-part`、`tool-call`、
+`tool-result`、`tool-status`、`tool-stream`、`context-capacity`、`model-routed`、`model-attempt`、
+`plan-submitted`、`question-request/resolved`、`approval-request/resolved`、`tool-execution`、
+`agent-activity`、`agent-progress`、`artifact-updated`、`error`、`done`。
+
+---
+
+## 五、工具清单（36 个）
+
+### 文件系统（6）
+
+`read`、`write`、`edit`、`move`、`glob`、`grep`
+
+### 通用（9）
+
+`bash`、`webfetch`、`websearch`、`todowrite`、`plan`、`question`、`task`、`delegate_dag`、`skill`
+
+### 原理图 / 器件（3）
+
+`schematic_read`、`pin_extract`、`datasheet_read`
+
+### 硬件 / 编译烧录 / 串口 / 调试（11）
+
+`compile`（ESP-IDF 内置编译，唯一 `embedded-build` 能力所有者）、`flash`（esptool 下载 + 校验）、
+`serial_open`、`serial_monitor`、`swd_debug`、`usb_detect`、`project_init`、`chip_add`、
+`lvgl_gen`、`write_office`、`ocr_image`
+
+### Eval Web 社区（7）
+
+`community_forum_list/read/create_topic/reply`、`community_blog_create_draft/update_draft/publish`
+
+运行时还会通过 `mcpManager.attach(toolReg)` 动态挂载 MCP 工具。
+`bash` 在 spawn 前必须经过 `ProcessCapabilityBroker` 分类（diagnostic / embedded-build /
+opaque-process），无法绕过 ESP-only 编译边界。
+
+---
+
+## 六、Agent 定义（20 个）
+
+| ID | 名称 | 模式 |
+|----|------|------|
+| `main-agent` | 主 Agent | 根入口（会话唯一 owner） |
+| `component-researcher` | 器件研究员 | hidden |
+| `project-initializer` | 项目初始化 | hidden |
+| `researcher` | 联网研究员 | hidden |
+| `requirements-analyst` | 需求分析师 | hidden |
+| `hardware-engineer` | 硬件工程师 | hidden |
+| `software-engineer` | 软件工程师 | hidden |
+| `firmware-engineer` | 固件工程师 | hidden |
+| `build-agent` | 编译工程师 | hidden |
+| `ui-engineer` | UI工程师 | hidden |
+| `architect` | 资深架构师 | hidden |
+| `os-engineer` | OS工程师 | hidden |
+| `test-engineer` | 测试工程师 | hidden |
+| `doc-writer` | 文档工程师 | hidden |
+| `planner` | 计划工程师 | hidden |
+| `debug-engineer` | 调试工程师 | hidden |
+| `general` | 通用助手 | hidden |
+| `explore` | 代码探索 | subagent |
+| `title-gen` | 标题生成 | hidden（内部） |
+| `summary-gen` | 摘要生成 | hidden（内部） |
+
+权限边界：只有 `runType=root + agentId=main-agent` 可调用 `task` 和 `delegate_dag`；
+子 Agent 只返回结构化 `TaskResult`，不能创建下级 Agent；子任务由
+`TaskSettlementService` 单事务直接结算（无二次评分/评审状态机）。
+
+---
+
+## 七、技能文件（8 个内置）
+
+`stm32-hal.md`、`freertos.md`、`lvgl-ui.md`、`arm-debugging.md`、`component-selection.md`、
+`architecture-audit.md`、`chip-support-boundary.md`、`write-blog.md`
+
+支持从 URL / Git 仓库 / 本地路径 / 内容安装新技能。
+
+---
+
+## 八、持久化（SQLite，55 个迁移版本）
+
+- 基础：`database.ts`、`database-schema.ts`、`repository.ts`（Session/Message/Project）
+- 运行：`task-run.ts`、`execution-run.ts`、`run-contract.ts`、`run-graph.ts`、`run-event.ts`、
+  `checkpoint.ts`、`conversation-objective.ts`
+- 会话：`session-command.ts`、`session-command-terminal.ts`、`session-artifact.ts`、
+  `tool-approval-record.ts`、`tool-execution.ts`
+- 审计：`call-log.ts`、`build-log.ts`、`orchestration-log.ts`、`model-attempt.ts`、
+  `token-usage.ts`
+- 工作流：`workflow.ts`、`workflow-template.ts`、`workflow-webhook.ts`
+- 租约 / 配置：`runtime-leader-lease.ts`、`runtime-owner-lease.ts`、`project-config.ts`
+
+---
+
+## 九、前端结构
+
+Tauri 2 + React 19 + TypeScript + Vite 7。`app/src/` 约 65 个组件：
+
+- 聊天区：ChatView / ChatInput / ChatMessages / ToolApprovalCard / UserQuestionDialog
+- 面板：LeftSidebar / RightPanel / BottomPanel / TasksPanel / ChangesPanel / WorkLogPanel /
+  DownloadPanel / TokenHeatmap / ContextUsagePanel
+- 设置：Settings（Account / Agents / Community / Diagnostics / Mcp / ModelRouting / Project /
+  Search / Skills / ToolCenter / ToolPolicies / SystemSettings / ModelConfig）
+- 工作流：WorkflowPanel / WorkflowGraph / WorkflowAnalytics / WorkflowSchedulePanel /
+  WorkflowTemplateEditor / WorkflowWebhookPanel / WorkflowRunDetails
+- 后端通过 `app/src/api.ts` + `src/sse.ts` 与 eval-server 通信；状态管理在 `src/store.ts`

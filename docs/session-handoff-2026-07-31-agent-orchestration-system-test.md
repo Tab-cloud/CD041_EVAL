@@ -1,5 +1,9 @@
 # Eval Agent 编排架构与系统测试交付文档
 
+> **历史文档说明（2026-08-26）：** 本文是 2026-07-31 会话交接记录，其中"新增系统测试仍失败、
+> 禁止发布"等结论为当时状态，不代表当前代码质量。当前执行架构以
+> [`agent-execution-loop-architecture.md`](./agent-execution-loop-architecture.md)（2026-08-09 复核）为准。
+
 > 交付日期：2026-07-31
 > 项目目录：`H:\Prj\CD041_LUBAN\embedded-agent`
 > 当前任务：修复主 Agent 在复杂任务中重复调用、子 Agent 未启动、任务长时间无交互并最终失败的问题
